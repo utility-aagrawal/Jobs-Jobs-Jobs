@@ -8,8 +8,10 @@ from flask import Flask, render_template
 import time
 import smtplib
 from collections import defaultdict
-from selenium.common.exceptions import ElementClickInterceptedException, NoSuchElementException
+from selenium.common.exceptions import ElementClickInterceptedException, NoSuchElementException, StaleElementReferenceException
 import traceback  # To print detailed stack trace
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 
 app = Flask(__name__)
 
@@ -21,24 +23,24 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 NEW_JOBS_FILE = "new_jobs.json"
 
-COMPANIES = [{"COMPANY_NAME": "Meta",
-              "URL": "https://www.metacareers.com/jobs?page=1000",
+COMPANIES = [{"COMPANY_NAME": "Google",
+              "URL": "https://www.google.com/about/careers/applications/jobs/results",
+              "JOB_TITLE_DIV": "div[class='ObfsIf-eEDwDf ObfsIf-eEDwDf-PvhD9-purZT-OiUrBf ObfsIf-eEDwDf-hJDwNd-Clt0zb']",
+              "JOB_LINK_DIV": "div[jsname='hOZ7Ge']",
+              "JOB_TITLE_TAG": "h3",
+              "JOB_LINK_TAG": "a"},
+              {"COMPANY_NAME": "C3 AI",
+              "URL": "https://c3.ai/careers/",
+              "JOB_TITLE_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
+              "JOB_LINK_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
+              "JOB_TITLE_TAG": "h4",
+              "JOB_LINK_TAG": "a"},
+              {"COMPANY_NAME": "Meta",
+              "URL": "https://www.metacareers.com/jobs", #?page=1000
               "JOB_TITLE_DIV": "div[class='_6g3g x8y0a91 xriwhlb xngnso2 xeqmlgx xeqr9p9 x1e096f4']",
               "JOB_LINK_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
               "JOB_TITLE_TAG": "h4",
               "JOB_LINK_TAG": "a"}]
-# [{"COMPANY_NAME": "Google",
-#               "URL": "https://www.google.com/about/careers/applications/jobs/results",
-#               "JOB_TITLE_DIV": "div[class='ObfsIf-eEDwDf ObfsIf-eEDwDf-PvhD9-purZT-OiUrBf ObfsIf-eEDwDf-hJDwNd-Clt0zb']",
-#               "JOB_LINK_DIV": "div[jsname='hOZ7Ge']",
-#               "JOB_TITLE_TAG": "h3",
-#               "JOB_LINK_TAG": "a"},
-#               {"COMPANY_NAME": "C3 AI",
-#               "URL": "https://c3.ai/careers/",
-#               "JOB_TITLE_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
-#               "JOB_LINK_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
-#               "JOB_TITLE_TAG": "h4",
-#               "JOB_LINK_TAG": "a"},
 
 
 KEYWORDS = ["scientist", "AI"]
@@ -49,11 +51,70 @@ def get_driver():
     chrome_options.add_argument("--headless")  # Run in headless mode
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    service = Service("/home/anurag/personal/Hourly_job_alerts/chromedriver-linux64/chromedriver")  # Update with your chromedriver path
+    service = Service("/Users/anuragagrawal/Downloads/chromedriver-mac-arm64/chromedriver")  # Update with your chromedriver path
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
+def fetch_meta_jobs(company_dict):
+    jobs = []
+    driver = get_driver() # Ensure the correct driver path is set
+    try:
+        driver.get(company_dict["URL"])
+        time.sleep(5)  # Allow time for the page to load fully
+
+        # Find all job elements
+        job_elements = driver.find_elements(By.CSS_SELECTOR, company_dict["JOB_TITLE_DIV"])
+        print(f"Found {len(job_elements)} job elements.")
+
+        for index, job in enumerate(job_elements):
+            try:
+                # Scroll to the job element for visibility
+                driver.execute_script("arguments[0].scrollIntoView(true);", job)
+                time.sleep(1)
+
+                # Extract the job title
+                title = job.text.strip()
+                # print(f"Job {index + 1} Title: {title}")
+
+                # Extract link from data attributes (if available)
+                job_link = job.get_attribute("data-href") or job.get_attribute("data-url") or None
+
+                if not job_link:
+                    # Fallback: Simulate CTRL+Click to open in a new tab
+                    ActionChains(driver).key_down(Keys.CONTROL).click(job).key_up(Keys.CONTROL).perform()
+                    time.sleep(3)
+
+                    # Switch to the new tab and capture the URL
+                    driver.switch_to.window(driver.window_handles[1])
+                    job_link = driver.current_url
+                    # print(f"Job {index + 1} Link: {job_link}")
+
+                    # Close the new tab and switch back
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                else:
+                    pass
+                    # print(f"Job {index + 1} Link (from attributes): {job_link}")
+
+                # Save the job details
+                jobs.append({"title": title, "link": job_link})
+
+            except StaleElementReferenceException:
+                print(f"Stale element for job {index + 1}. Skipping...")
+                continue
+            except Exception as e:
+                print(f"Error processing job {index + 1}: {e}")
+                print(traceback.format_exc())
+                continue
+
+    finally:
+        print("Closing the browser...")
+        driver.quit()
+        print(f"Total jobs fetched: {len(jobs)}")
+        return jobs
+
 def fetch_jobs(company_dict):
+    if company_dict["COMPANY_NAME"] == "Meta": return fetch_meta_jobs(company_dict)
     jobs = []
     driver = get_driver()
     try:
@@ -109,11 +170,8 @@ def fetch_jobs(company_dict):
 
                 for job, job_link in zip(job_elements, job_links):
                     try:
-                        try:
-                            title_element = job.find_element(By.CSS_SELECTOR, company_dict["JOB_TITLE_TAG"])
-                            title = title_element.text
-                        except NoSuchElementException:
-                            title = job.text
+                        title_element = job.find_element(By.CSS_SELECTOR, company_dict["JOB_TITLE_TAG"])
+                        title = title_element.text
                         link_element = job_link.find_element(By.CSS_SELECTOR, company_dict["JOB_LINK_TAG"])
                         link = link_element.get_attribute("href")
 
@@ -200,4 +258,4 @@ def home():
 
 if __name__ == "__main__":
     # daily_job_alert()
-    app.run(debug=True)
+    app.run(debug=True, port=5004)
