@@ -12,7 +12,8 @@ from selenium.common.exceptions import ElementClickInterceptedException, NoSuchE
 import traceback  # To print detailed stack trace
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-
+import hashlib
+import json
 app = Flask(__name__)
 
 # Configuration
@@ -21,7 +22,7 @@ EMAIL_NOTIFICATIONS = ""
 EMAIL_PASSWORD = ""
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-NEW_JOBS_FILE = "new_jobs.json"
+PREVIOUS_JOBS_FILE = "prev_jobs.json"
 
 COMPANIES = [{"COMPANY_NAME": "Google",
               "URL": "https://www.google.com/about/careers/applications/jobs/results",
@@ -45,13 +46,32 @@ COMPANIES = [{"COMPANY_NAME": "Google",
 
 KEYWORDS = ["scientist", "AI"]
 
+# Load previously seen job hashes
+def load_previous_hashes():
+    try:
+        with open(PREVIOUS_JOBS_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+    
+# Save current job hashes
+def save_hashes(hashes):
+    with open(PREVIOUS_JOBS_FILE, "w") as f:
+        json.dump(list(hashes), f)
+
+# Generate a unique hash for a job
+def generate_job_hash(job):
+    job_string = f"{job['title']}|{job['link']}|{job.get('company', '')}"
+    return hashlib.sha256(job_string.encode("utf-8")).hexdigest()
+
 # Function to set up Selenium WebDriver
 def get_driver():
     chrome_options = Options()
     chrome_options.add_argument("--headless")  # Run in headless mode
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    service = Service("/Users/anuragagrawal/Downloads/chromedriver-mac-arm64/chromedriver")  # Update with your chromedriver path
+    service = Service("/home/anurag/personal/Hourly_job_alerts/chromedriver-linux64/chromedriver")  # Update with your chromedriver path
+    #Mac - "/Users/anuragagrawal/Downloads/chromedriver-mac-arm64/chromedriver"
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
@@ -121,6 +141,10 @@ def fetch_jobs(company_dict):
         driver.get(company_dict["URL"])
         time.sleep(5)  # Allow time for page to load
 
+        # Load previously seen hashes
+        previous_hashes = load_previous_hashes()
+        new_hashes = set()
+
         # Handle "View All" button using CSS Selector
         try:
             view_all_buttons = driver.find_elements(By.CSS_SELECTOR, "button")
@@ -171,12 +195,20 @@ def fetch_jobs(company_dict):
                 for job, job_link in zip(job_elements, job_links):
                     try:
                         title_element = job.find_element(By.CSS_SELECTOR, company_dict["JOB_TITLE_TAG"])
-                        title = title_element.text
+                        title = title_element.text.strip()
                         link_element = job_link.find_element(By.CSS_SELECTOR, company_dict["JOB_LINK_TAG"])
                         link = link_element.get_attribute("href")
 
+                        job_entry = {"title": title, "link": link, "company": company_dict["COMPANY_NAME"]}
+                        job_hash = generate_job_hash(job_entry)
+                        # Skip if job is already seen
+                        if job_hash in previous_hashes:
+                            print(f"Encountered previously seen job: {job_entry}. Skipping remaining/older jobs.")
+                            return jobs
+
                         if any(keyword.lower() in title.lower() for keyword in KEYWORDS):
-                            jobs.append({"title": title, "link": link})
+                            jobs.append(job_entry)
+                            new_hashes.add(job_hash)
                     except Exception as e:
                         print("Error extracting job details:")
                         print(traceback.format_exc())
@@ -205,6 +237,10 @@ def fetch_jobs(company_dict):
     finally:
         print("Closing the browser...")
         driver.quit()
+    
+    # Update stored hashes with new ones
+    previous_hashes.update(new_hashes)
+    save_hashes(previous_hashes)
     
     print(f"Total jobs collected: {len(jobs)}")
     return jobs
