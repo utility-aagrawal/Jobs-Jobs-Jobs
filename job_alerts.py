@@ -41,23 +41,48 @@ COMPANIES = [{"COMPANY_NAME": "Google",
               "JOB_TITLE_DIV": "div[class='_6g3g x8y0a91 xriwhlb xngnso2 xeqmlgx xeqr9p9 x1e096f4']",
               "JOB_LINK_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
               "JOB_TITLE_TAG": "h4",
-              "JOB_LINK_TAG": "a"}]
+              "JOB_LINK_TAG": "a"},
+              {"COMPANY_NAME": "Apple",
+              "URL": "https://jobs.apple.com/en-us/search?location=united-states-USA", #?page=1000
+              "JOB_TITLE_DIV": "a[class='table--advanced-search__title']",
+              "JOB_LINK_DIV": "a[class='table--advanced-search__title']",
+              "JOB_TITLE_TAG": "h4",#NA
+              "JOB_LINK_TAG": "a"},]#NA
 
+# [{"COMPANY_NAME": "Netflix",
+#               "URL": "https://explore.jobs.netflix.net/careers", #?page=1000
+#               "JOB_TITLE_DIV": "div[class='position-title line-clamp line-clamp-2 line-clamp-done']",
+#               "JOB_LINK_DIV": "div[class='cell large-12 medium-12 small-12 job_card'], div[class='cell large-12 medium-12 small-12 job_card more-item']",
+#               "JOB_TITLE_TAG": "h4",
+#               "JOB_LINK_TAG": "a"},]
 
-KEYWORDS = ["scientist", "AI"]
+KEYWORDS = ["scientist", "engineer"]
 
 # Load previously seen job hashes
-def load_previous_hashes():
+def load_previous_hashes(company_name):
     try:
         with open(PREVIOUS_JOBS_FILE, "r") as f:
-            return set(json.load(f))
+            return set(json.load(f)[company_name])
     except FileNotFoundError:
+        return set()
+    except KeyError:
         return set()
     
 # Save current job hashes
-def save_hashes(hashes):
+def save_hashes(updated_hashes, company_name):
+    # Load existing hashes if the file exists
+    try:
+        with open(PREVIOUS_JOBS_FILE, "r") as f:
+            hashes = json.load(f)
+    except FileNotFoundError:
+        hashes = {}  # Initialize an empty dictionary if the file doesn't exist
+
+    # Update the hashes for the given company
+    hashes[company_name] = list(set(updated_hashes))  # Ensure uniqueness of hashes
+
+    # Save back to the file
     with open(PREVIOUS_JOBS_FILE, "w") as f:
-        json.dump(list(hashes), f)
+        json.dump(hashes, f, indent=4)
 
 # Generate a unique hash for a job
 def generate_job_hash(job):
@@ -80,10 +105,17 @@ def fetch_meta_jobs(company_dict):
     driver = get_driver() # Ensure the correct driver path is set
     try:
         driver.get(company_dict["URL"])
-        time.sleep(5)  # Allow time for the page to load fully
+        time.sleep(30)  # Allow time for the page to load fully
+
+        # Load previously seen hashes
+        previous_hashes = load_previous_hashes(company_dict["COMPANY_NAME"])
+        new_hashes = set()
 
         # Find all job elements
-        job_elements = driver.find_elements(By.CSS_SELECTOR, company_dict["JOB_TITLE_DIV"])
+        # job_elements = driver.find_elements(By.CSS_SELECTOR, company_dict["JOB_TITLE_DIV"])
+        job_elements = driver.find_elements(By.CSS_SELECTOR, "a.card position-card pointer")
+        
+        print(job_elements)
         print(f"Found {len(job_elements)} job elements.")
 
         for index, job in enumerate(job_elements):
@@ -104,20 +136,32 @@ def fetch_meta_jobs(company_dict):
                     ActionChains(driver).key_down(Keys.CONTROL).click(job).key_up(Keys.CONTROL).perform()
                     time.sleep(3)
 
-                    # Switch to the new tab and capture the URL
-                    driver.switch_to.window(driver.window_handles[1])
-                    job_link = driver.current_url
-                    # print(f"Job {index + 1} Link: {job_link}")
+                    if company_dict["COMPANY_NAME"] == "Meta":
+                        # Switch to the new tab and capture the URL
+                        driver.switch_to.window(driver.window_handles[1])
+                        job_link = driver.current_url
+                        # print(f"Job {index + 1} Link: {job_link}")
 
-                    # Close the new tab and switch back
-                    driver.close()
-                    driver.switch_to.window(driver.window_handles[0])
+                        # Close the new tab and switch back
+                        driver.close()
+                        driver.switch_to.window(driver.window_handles[0])
+                    elif company_dict["COMPANY_NAME"] == "Netflix":
+                        job_link = driver.current_url
+                
                 else:
                     pass
-                    # print(f"Job {index + 1} Link (from attributes): {job_link}")
+                
+                # print(f"Job {index + 1} Link (from attributes): {job_link}")
+                job_entry = {"title": title, "link": job_link, "company": company_dict["COMPANY_NAME"]}
+                job_hash = generate_job_hash(job_entry)
+                # Skip if job is already seen
+                if job_hash in previous_hashes:
+                    print(f"Encountered previously seen job: {job_entry}. Skipping remaining/older jobs.")
+                    return jobs
 
-                # Save the job details
-                jobs.append({"title": title, "link": job_link})
+                if any(keyword.lower() in title.lower() for keyword in KEYWORDS):
+                    jobs.append(job_entry)
+                    new_hashes.add(job_hash)
 
             except StaleElementReferenceException:
                 print(f"Stale element for job {index + 1}. Skipping...")
@@ -131,10 +175,13 @@ def fetch_meta_jobs(company_dict):
         print("Closing the browser...")
         driver.quit()
         print(f"Total jobs fetched: {len(jobs)}")
+        # Update stored hashes with new ones
+        previous_hashes.update(new_hashes)
+        save_hashes(previous_hashes, company_dict["COMPANY_NAME"])
         return jobs
 
 def fetch_jobs(company_dict):
-    if company_dict["COMPANY_NAME"] == "Meta": return fetch_meta_jobs(company_dict)
+    if company_dict["COMPANY_NAME"] in ["Meta", "Netflix"]: return fetch_meta_jobs(company_dict)
     jobs = []
     driver = get_driver()
     try:
@@ -142,7 +189,7 @@ def fetch_jobs(company_dict):
         time.sleep(5)  # Allow time for page to load
 
         # Load previously seen hashes
-        previous_hashes = load_previous_hashes()
+        previous_hashes = load_previous_hashes(company_dict["COMPANY_NAME"])
         new_hashes = set()
 
         # Handle "View All" button using CSS Selector
@@ -157,7 +204,7 @@ def fetch_jobs(company_dict):
                     driver.execute_script("arguments[0].scrollIntoView(true);", button)
                     driver.execute_script("arguments[0].click();", button)  # Force click using JS
                     time.sleep(5)
-                    view_all_clicked = True
+                    view_all_clicked = Truejob_entry
                     print("'View all' button clicked successfully.")
                     break
 
@@ -166,6 +213,7 @@ def fetch_jobs(company_dict):
         except Exception as e:
             print("Error while handling 'View All' button:")
             print(traceback.format_exc())
+        print(f"URL after clicking/checking for buttons: {driver.current_url}")
 
         # Scroll to the bottom if infinite scroll
         try:
@@ -182,6 +230,8 @@ def fetch_jobs(company_dict):
         except Exception as e:
             print("Error during infinite scroll:")
             print(traceback.format_exc())
+        
+        print(f"URL after infinite scroll: {driver.current_url}")
 
         # Handle Pagination
         while True:
@@ -193,11 +243,16 @@ def fetch_jobs(company_dict):
                 print(f"Found {len(job_elements)} job elements and {len(job_links)} job links.")
 
                 for job, job_link in zip(job_elements, job_links):
+                    print(job.text, job_link.get_attribute("href"))
                     try:
-                        title_element = job.find_element(By.CSS_SELECTOR, company_dict["JOB_TITLE_TAG"])
-                        title = title_element.text.strip()
-                        link_element = job_link.find_element(By.CSS_SELECTOR, company_dict["JOB_LINK_TAG"])
-                        link = link_element.get_attribute("href")
+                        if company_dict["COMPANY_NAME"] != "Apple":
+                            title_element = job.find_element(By.CSS_SELECTOR, company_dict["JOB_TITLE_TAG"])
+                            title = title_element.text.strip()
+                            link_element = job_link.find_element(By.CSS_SELECTOR, company_dict["JOB_LINK_TAG"])
+                            link = link_element.get_attribute("href")
+                        else:
+                            title = job.text.strip()
+                            link = job_link.get_attribute("href")
 
                         job_entry = {"title": title, "link": link, "company": company_dict["COMPANY_NAME"]}
                         job_hash = generate_job_hash(job_entry)
@@ -220,6 +275,8 @@ def fetch_jobs(company_dict):
                     driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
                     driver.execute_script("arguments[0].click();", next_button)  # Force click
                     time.sleep(5)
+                except NoSuchElementException:
+                    break
                 except ElementClickInterceptedException:
                     print("Click intercepted! Attempting to close overlays...")
                     # Example: Hide the interfering element
@@ -240,7 +297,7 @@ def fetch_jobs(company_dict):
     
     # Update stored hashes with new ones
     previous_hashes.update(new_hashes)
-    save_hashes(previous_hashes)
+    save_hashes(previous_hashes, company_dict["COMPANY_NAME"])
     
     print(f"Total jobs collected: {len(jobs)}")
     return jobs
