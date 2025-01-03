@@ -1,31 +1,113 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Alerts</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" 
+          rel="stylesheet" 
+          integrity="sha384-GLhlTQ8iRABdZLl6O3oVMWSktQOp6b7In1Zl3/Jr59b6EGGoI1aFkw7cmDA6j6gD" 
+          crossorigin="anonymous">
+    <!-- Favicon -->
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <style>
+        body {
+            margin: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        #please-wait {
+            margin-top: 20px;
+            text-align: center;
+        }
+        #results {
+            margin-top: 30px;
+        }
+    </style>
 </head>
 <body>
-    <h1>New Job Postings</h1>
-    {% if jobs %}
-        <ul>
-            {% for company, company_jobs in jobs.items() %}
-                <li>
-                    <strong>{{ company }}</strong>
-                    {% if company_jobs %}
-                        <ul>
-                            {% for job in company_jobs %}
-                                <li>
-                                    <a href="{{ job.link }}">{{ job.title }}</a>
-                                </li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p>No jobs found for this company.</p>
-                    {% endif %}
-                </li>
-            {% endfor %}
-        </ul>
-    {% else %}
-        <p>No new jobs found today.</p>
-    {% endif %}
+    <!-- Main Content -->
+    <div class="container">
+        <h1>Job Alerts</h1>
+
+        <!-- Form for Selecting Companies -->
+        <form id="job-form" onsubmit="handleFormSubmit(event)" class="mb-4">
+            <div class="mb-3">
+                <label for="companies" class="form-label">Select Companies:</label>
+                <select name="companies" id="companies" multiple class="form-control">
+                    {% for company in available_companies %}
+                        <option value="{{ company }}">{{ company }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label for="keywords" class="form-label">Enter Keywords (comma-separated):</label>
+                <input type="text" id="keywords" name="keywords" class="form-control" placeholder="e.g., engineer, scientist, manager" required>
+            </div>
+
+            <div class="mb-3">
+                <label for="email" class="form-label">Enter your email ID:</label>
+                <input type="text" id="email" name="email" class="form-control" placeholder="e.g., abc@gmail.com">
+            </div>
+
+            <button type="submit" class="btn btn-primary">Submit</button>
+        </form>
+
+        <!-- Please Wait Message -->
+        <p id="please-wait" class="text-info" style="display: none;">Please wait while we fetch the results...</p>
+
+        <!-- Results Section -->
+        <div id="results" style="display: none;"></div>
+    </div>
+
+    <!-- Bootstrap JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js" 
+            integrity="sha384-w76AqPfDkMBDXo30jS1Sgez6pr3x5MlQ1ZAGC+nuZB+EYdgRZgiwxhTBTkF7CXvN" 
+            crossorigin="anonymous"></script>
+    <script>
+        function handleFormSubmit(event) {
+            event.preventDefault(); // Prevent form submission
+            document.getElementById("please-wait").style.display = "block"; // Show "Please Wait" message
+            document.getElementById("results").style.display = "none"; // Hide previous results
+
+            const form = event.target;
+            const formData = new FormData(form);
+
+            // Send form data to the server
+            fetch("/", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById("please-wait").style.display = "none"; // Hide "Please Wait"
+                const resultsDiv = document.getElementById("results");
+                resultsDiv.style.display = "block"; // Show results
+
+                // Populate results
+                let resultsHtml = "";
+                for (const [company, companyJobs] of Object.entries(data)) {
+                    resultsHtml += `<strong>${company}</strong>`;
+                    if (companyJobs.length > 0) {
+                        resultsHtml += "<ul>";
+                        companyJobs.forEach(job => {
+                            resultsHtml += `<li><a href="${job.link}">${job.title}</a></li>`;
+                        });
+                        resultsHtml += "</ul>";
+                    } else {
+                        resultsHtml += "<p>No jobs found for this company.</p>";
+                    }
+                }
+                resultsDiv.innerHTML = resultsHtml;
+            })
+            .catch(error => {
+                console.error("Error fetching results:", error);
+            });
+        }
+    </script>
 </body>
 </html>

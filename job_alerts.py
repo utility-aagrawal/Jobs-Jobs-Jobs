@@ -4,7 +4,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 import time
 import smtplib
 from collections import defaultdict
@@ -14,11 +14,13 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import hashlib
 import json
+import threading
+
 app = Flask(__name__)
 
 # Configuration
 
-EMAIL_NOTIFICATIONS = ""
+EMAIL_NOTIFICATIONS = "anuragrawal2023@gmail.com"
 EMAIL_PASSWORD = ""
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
@@ -56,7 +58,16 @@ COMPANIES = [{"COMPANY_NAME": "Google",
 #               "JOB_TITLE_TAG": "h4",
 #               "JOB_LINK_TAG": "a"},]
 
-KEYWORDS = ["scientist", "engineer"]
+
+# List of companies for the dropdown
+COMPANIES_DROPDOWN_OPTIONS = [
+    {"COMPANY_NAME": "Google"},
+    {"COMPANY_NAME": "C3 AI"},
+    {"COMPANY_NAME": "Meta"},
+    {"COMPANY_NAME": "Apple"},
+]
+
+# KEYWORDS = ["scientist", "engineer"]
 
 # Load previously seen job hashes
 def load_previous_hashes(company_name):
@@ -100,7 +111,7 @@ def get_driver():
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
-def fetch_meta_jobs(company_dict):
+def fetch_meta_jobs(company_dict, keywords):
     jobs = []
     driver = get_driver() # Ensure the correct driver path is set
     try:
@@ -112,8 +123,8 @@ def fetch_meta_jobs(company_dict):
         new_hashes = set()
 
         # Find all job elements
-        # job_elements = driver.find_elements(By.CSS_SELECTOR, company_dict["JOB_TITLE_DIV"])
-        job_elements = driver.find_elements(By.CSS_SELECTOR, "a.card position-card pointer")
+        job_elements = driver.find_elements(By.CSS_SELECTOR, company_dict["JOB_TITLE_DIV"])
+        # job_elements = driver.find_elements(By.CSS_SELECTOR, "a.card position-card pointer")
         
         print(job_elements)
         print(f"Found {len(job_elements)} job elements.")
@@ -159,7 +170,7 @@ def fetch_meta_jobs(company_dict):
                     print(f"Encountered previously seen job: {job_entry}. Skipping remaining/older jobs.")
                     return jobs
 
-                if any(keyword.lower() in title.lower() for keyword in KEYWORDS):
+                if any(keyword.lower() in title.lower() for keyword in keywords):
                     jobs.append(job_entry)
                     new_hashes.add(job_hash)
 
@@ -180,8 +191,8 @@ def fetch_meta_jobs(company_dict):
         save_hashes(previous_hashes, company_dict["COMPANY_NAME"])
         return jobs
 
-def fetch_jobs(company_dict):
-    if company_dict["COMPANY_NAME"] in ["Meta", "Netflix"]: return fetch_meta_jobs(company_dict)
+def fetch_jobs(company_dict, keywords):
+    if company_dict["COMPANY_NAME"] in ["Meta", "Netflix"]: return fetch_meta_jobs(company_dict, keywords)
     jobs = []
     driver = get_driver()
     try:
@@ -204,7 +215,7 @@ def fetch_jobs(company_dict):
                     driver.execute_script("arguments[0].scrollIntoView(true);", button)
                     driver.execute_script("arguments[0].click();", button)  # Force click using JS
                     time.sleep(5)
-                    view_all_clicked = Truejob_entry
+                    view_all_clicked = True
                     print("'View all' button clicked successfully.")
                     break
 
@@ -261,7 +272,7 @@ def fetch_jobs(company_dict):
                             print(f"Encountered previously seen job: {job_entry}. Skipping remaining/older jobs.")
                             return jobs
 
-                        if any(keyword.lower() in title.lower() for keyword in KEYWORDS):
+                        if any(keyword.lower() in title.lower() for keyword in keywords):
                             jobs.append(job_entry)
                             new_hashes.add(job_hash)
                     except Exception as e:
@@ -303,20 +314,20 @@ def fetch_jobs(company_dict):
     return jobs
 
 # Fetch and store new jobs
-def collect_new_jobs():
+def collect_new_jobs(temp, keywords):
     all_jobs = defaultdict(list)
-    for company in COMPANIES:
-        jobs = fetch_jobs(company)
+    for company in temp:
+        jobs = fetch_jobs(company, keywords)
         all_jobs[company["COMPANY_NAME"]].extend(jobs)
     print(all_jobs)
     return all_jobs
 
 # Send daily email notifications
-def send_email(all_jobs):
+def send_email(all_jobs, toEmailID):
     try:
         message = MIMEMultipart()
         message["From"] = EMAIL_NOTIFICATIONS
-        message["To"] = EMAIL_NOTIFICATIONS
+        message["To"] = toEmailID
         message["Subject"] = "Daily Job Alerts"
 
         html_content = "<h2>New Job Postings:</h2><ul>"
@@ -338,16 +349,62 @@ def send_email(all_jobs):
         print(f"Error sending email: {e}")  # Catch and print any errors
 
 # Daily task to fetch and send email
-def daily_job_alert():
-    new_jobs = collect_new_jobs()
+def daily_job_alert(new_jobs):
+    # new_jobs = collect_new_jobs()
     if new_jobs:
         send_email(new_jobs)
 
-# Web interface
-@app.route("/")
+# # Web interface
+# @app.route("/")
+# def home():
+#     jobs = collect_new_jobs()
+#     return render_template("index.html", jobs=jobs)
+
+# Placeholder for results
+results = []
+
+def background_task(selected_companies):
+    """Simulate a long-running job fetching task."""
+    global results
+    results = []  # Reset results
+    for company in selected_companies:
+        time.sleep(2)  # Simulate a delay
+        results.append(f"Fetched jobs for {company}")
+
+@app.route("/", methods=["GET", "POST"])
 def home():
-    jobs = collect_new_jobs()
-    return render_template("index.html", jobs=jobs)
+    available_companies = [company["COMPANY_NAME"] for company in COMPANIES_DROPDOWN_OPTIONS]  # Update the variable name
+    jobs = {}
+
+    if request.method == "POST":
+        # Get selected companies from the form
+        selected_companies = request.form.getlist("companies")
+        print(selected_companies)
+        temp = [COMPANY for COMPANY in COMPANIES if COMPANY["COMPANY_NAME"] in selected_companies]
+
+
+        # Get keywords and split into a list
+        raw_keywords = request.form.get("keywords", "")
+        keywords = [keyword.strip().lower() for keyword in raw_keywords.split(",") if keyword.strip()]
+
+        toEmailID = request.form.get("email") or "anuragrawal2023@gmail.com"
+
+        print(toEmailID)
+        # Run the job fetching logic for the selected companies
+        jobs = collect_new_jobs(temp, keywords)
+        send_email(jobs, toEmailID)
+        return  jsonify(jobs)
+    
+    return render_template("index.html", available_companies=available_companies)
+
+
+@app.route("/results", methods=["GET"])
+def get_results():
+    """Return the results to the client."""
+    global results
+    if not results:
+        return jsonify({"status": "Processing", "data": []})
+    return jsonify({"status": "Completed", "data": results})
 
 if __name__ == "__main__":
     # daily_job_alert()
